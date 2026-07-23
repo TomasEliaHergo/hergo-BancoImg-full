@@ -38,15 +38,24 @@ npm run dev
 
 Abrir http://localhost:5173
 
-## Producción (una sola URL)
+## Producción (una sola PC, acceso por IP)
+
+Todo corre en **una sola máquina** de la red interna (la que tenga acceso de escritura
+a `\\iis\www`). El mismo Express sirve el frontend **y** la API en un único puerto.
 
 ```bash
 cd client && npm install && npm run build
 cd ../server && npm install && npm start
 ```
 
-Servir la carpeta `client/dist` con el mismo Express (o con un IIS/nginx que también
-proxee `/api` al puerto 4000). Ver notas al final.
+El server detecta `client/dist` y lo sirve automáticamente. Los diseñadores entran desde
+cualquier PC de la red a `http://IP-DE-LA-PC:4000` (ej. `http://192.168.1.50:4000`).
+
+Notas:
+- Averiguá la IP con `ipconfig` (IPv4 de la red interna).
+- Abrí el puerto 4000 en el Firewall de Windows (regla de entrada) para que otras PCs lleguen.
+- Para que arranque solo al prender la PC, instalalo como servicio (ej. `pm2` o NSSM).
+- No hace falta Node en el servidor IIS viejo: esta PC escribe en `\\iis\www` por red.
 
 ## Configuración importante
 

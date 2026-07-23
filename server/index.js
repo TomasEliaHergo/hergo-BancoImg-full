@@ -3,56 +3,103 @@ const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
-const { createClient } = require("@supabase/supabase-js");
+const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 const CONFIG_PATH = path.join(__dirname, "config.json");
+const USERS_PATH = path.join(__dirname, "usuarios.json");
+const SECRET_PATH = path.join(__dirname, ".secret");
+const DIST = path.join(__dirname, "..", "client", "dist");
+const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 horas
 
-// ---------- Configuracion por entorno ----------
-const APP_SLUG = process.env.APP_SLUG || "hergo-imagenes";
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const CORS_ORIGIN = process.env.CORS_ORIGIN; // ej. "https://tuapp.vercel.app" (coma para varios)
-
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.warn(
-    "[ADVERTENCIA] Falta SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY. El login y la gestion de usuarios no funcionaran hasta configurarlas."
-  );
-}
-
-// Cliente admin (service role): valida tokens y administra usuarios. NUNCA se expone al frontend.
-const supabaseAdmin =
-  SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
-    : null;
-
-// ---------- CORS ----------
-const corsOptions = CORS_ORIGIN
-  ? { origin: CORS_ORIGIN.split(",").map((s) => s.trim()) }
-  : {}; // sin restriccion en desarrollo
-app.use(cors(corsOptions));
+app.use(cors()); // uso en red interna; mismo origen al servir client/dist
 app.use(express.json());
 
-// ==================== Autenticacion vía Supabase ====================
-// Verifica el JWT de Supabase y adjunta req.usuario con su rol en ESTA app.
-async function requireAuth(req, res, next) {
-  if (!supabaseAdmin) return res.status(500).json({ error: "Servidor sin Supabase configurado." });
+// ==================== Autenticación local ====================
+// Secreto para firmar tokens. Se genera solo la primera vez. NO versionar.
+function getSecret() {
+  if (fs.existsSync(SECRET_PATH)) return fs.readFileSync(SECRET_PATH, "utf-8");
+  const s = crypto.randomBytes(48).toString("hex");
+  fs.writeFileSync(SECRET_PATH, s, "utf-8");
+  return s;
+}
+const SECRET = getSecret();
+
+// Hash de contraseña con scrypt + salt.
+function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return { salt, hash };
+}
+function verifyPassword(password, salt, hash) {
+  const h = crypto.scryptSync(password, salt, 64).toString("hex");
+  const a = Buffer.from(h, "hex");
+  const b = Buffer.from(hash, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Token propio firmado (HMAC-SHA256): body.base64url + firma.
+function firmarToken(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+function verificarToken(token) {
+  const [body, sig] = String(token || "").split(".");
+  if (!body || !sig) return null;
+  const esperado = crypto.createHmac("sha256", SECRET).update(body).digest("base64url");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(esperado);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(body, "base64url").toString());
+  } catch {
+    return null;
+  }
+  if (!payload.exp || Date.now() > payload.exp) return null;
+  return payload;
+}
+
+// ---------- Almacenamiento de usuarios ----------
+function leerUsuarios() {
+  if (!fs.existsSync(USERS_PATH)) return [];
+  return JSON.parse(fs.readFileSync(USERS_PATH, "utf-8"));
+}
+function guardarUsuarios(usuarios) {
+  fs.writeFileSync(USERS_PATH, JSON.stringify(usuarios, null, 2), "utf-8");
+}
+function buscarUsuario(username) {
+  const objetivo = String(username || "").toLowerCase();
+  return leerUsuarios().find((u) => u.username.toLowerCase() === objetivo) || null;
+}
+// Al primer arranque, si no hay usuarios, crea el admin inicial.
+function asegurarAdminInicial() {
+  const usuarios = leerUsuarios();
+  if (usuarios.length === 0) {
+    const { salt, hash } = hashPassword("admin123");
+    usuarios.push({ username: "admin", salt, hash, rol: "administrador", debeCambiarPassword: true });
+    guardarUsuarios(usuarios);
+    console.log("[INFO] Admin inicial creado: usuario 'admin' / contraseña 'admin123' (cambiar al ingresar).");
+  }
+}
+asegurarAdminInicial();
+
+// Vista pública del usuario (sin datos sensibles).
+function usuarioPublico(u) {
+  return { username: u.username, rol: u.rol, debeCambiarPassword: !!u.debeCambiarPassword };
+}
+
+// ---------- Middlewares de autenticación ----------
+function requireAuth(req, res, next) {
   const auth = req.headers.authorization || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-  if (!token) return res.status(401).json({ error: "No autenticado." });
-  const { data, error } = await supabaseAdmin.auth.getUser(token);
-  if (error || !data?.user) return res.status(401).json({ error: "Sesión inválida." });
-  const roles = data.user.app_metadata?.roles || {};
-  req.usuario = { id: data.user.id, email: data.user.email, rol: roles[APP_SLUG] || null };
+  const payload = token ? verificarToken(token) : null;
+  if (!payload) return res.status(401).json({ error: "No autenticado." });
+  const u = buscarUsuario(payload.username);
+  if (!u) return res.status(401).json({ error: "Sesión inválida." });
+  req.usuario = u;
   next();
-}
-// Requiere pertenecer a la app (tener rol asignado).
-function requireMiembro(req, res, next) {
-  requireAuth(req, res, () => {
-    if (!req.usuario.rol) return res.status(403).json({ error: "No tenés acceso a esta aplicación." });
-    next();
-  });
 }
 function requireAdmin(req, res, next) {
   requireAuth(req, res, () => {
@@ -63,114 +110,82 @@ function requireAdmin(req, res, next) {
   });
 }
 
-// ---------- Datos del usuario actual (rol en esta app) ----------
+// ---------- Login / sesión ----------
+app.post("/api/login", (req, res) => {
+  const { username, password } = req.body || {};
+  const u = buscarUsuario(username);
+  if (!u || !verifyPassword(password || "", u.salt, u.hash)) {
+    return res.status(401).json({ error: "Usuario o contraseña incorrectos." });
+  }
+  const token = firmarToken({ username: u.username, exp: Date.now() + TOKEN_TTL_MS });
+  res.json({ token, usuario: usuarioPublico(u) });
+});
+
 app.get("/api/yo", requireAuth, (req, res) => {
-  res.json({ email: req.usuario.email, rol: req.usuario.rol });
+  res.json(usuarioPublico(req.usuario));
 });
 
-// ==================== Gestion de usuarios (solo admin, vía Admin API) ====================
-// Busca un usuario por email recorriendo listUsers (paginado).
-async function buscarPorEmail(email) {
-  const objetivo = String(email || "").toLowerCase();
-  let page = 1;
-  for (;;) {
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 200 });
-    if (error) throw new Error(error.message);
-    const u = data.users.find((x) => (x.email || "").toLowerCase() === objetivo);
-    if (u) return u;
-    if (data.users.length < 200) return null;
-    page++;
+app.post("/api/cambiar-password", requireAuth, (req, res) => {
+  const { passwordActual, passwordNueva } = req.body || {};
+  const u = req.usuario;
+  if (!verifyPassword(passwordActual || "", u.salt, u.hash)) {
+    return res.status(400).json({ error: "La contraseña actual no es correcta." });
   }
-}
-
-// Lista los usuarios que tienen rol en ESTA app.
-app.get("/api/usuarios", requireAdmin, async (req, res) => {
-  try {
-    const miembros = [];
-    let page = 1;
-    for (;;) {
-      const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 200 });
-      if (error) throw new Error(error.message);
-      for (const u of data.users) {
-        const rol = u.app_metadata?.roles?.[APP_SLUG];
-        if (rol) miembros.push({ id: u.id, email: u.email, rol });
-      }
-      if (data.users.length < 200) break;
-      page++;
-    }
-    res.json(miembros);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
+  if (!passwordNueva || passwordNueva.length < 6) {
+    return res.status(400).json({ error: "La nueva contraseña debe tener al menos 6 caracteres." });
   }
+  const usuarios = leerUsuarios();
+  const idx = usuarios.findIndex((x) => x.username === u.username);
+  const { salt, hash } = hashPassword(passwordNueva);
+  usuarios[idx] = { ...usuarios[idx], salt, hash, debeCambiarPassword: false };
+  guardarUsuarios(usuarios);
+  res.json({ ok: true });
 });
 
-// Crea (o suma a esta app) un usuario con su rol.
-app.post("/api/usuarios", requireAdmin, async (req, res) => {
-  try {
-    const { email, password, rol } = req.body || {};
-    if (!email) return res.status(400).json({ error: "Falta el email." });
-    if (!["usuario", "administrador"].includes(rol)) return res.status(400).json({ error: "Rol inválido." });
-
-    const existente = await buscarPorEmail(email);
-    if (existente) {
-      // Ya existe (quizás en otra app): le sumamos el rol para esta app.
-      const roles = { ...(existente.app_metadata?.roles || {}), [APP_SLUG]: rol };
-      const { error } = await supabaseAdmin.auth.admin.updateUserById(existente.id, {
-        app_metadata: { roles },
-      });
-      if (error) throw new Error(error.message);
-      return res.json({ ok: true, reutilizado: true });
-    }
-
-    if (!password || password.length < 6) {
-      return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres." });
-    }
-    const { error } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      app_metadata: { roles: { [APP_SLUG]: rol } },
-    });
-    if (error) throw new Error(error.message);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
+// ==================== Gestión de usuarios (solo admin) ====================
+app.get("/api/usuarios", requireAdmin, (req, res) => {
+  res.json(leerUsuarios().map((u) => ({ username: u.username, rol: u.rol })));
 });
 
-// Restablece la contraseña de un usuario.
-app.post("/api/usuarios/:id/password", requireAdmin, async (req, res) => {
-  try {
-    const { password } = req.body || {};
-    if (!password || password.length < 6) {
-      return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres." });
-    }
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(req.params.id, { password });
-    if (error) throw new Error(error.message);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
+app.post("/api/usuarios", requireAdmin, (req, res) => {
+  const { username, password, rol } = req.body || {};
+  const nombre = String(username || "").trim();
+  if (!nombre) return res.status(400).json({ error: "Falta el usuario." });
+  if (!["usuario", "administrador"].includes(rol)) return res.status(400).json({ error: "Rol inválido." });
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres." });
   }
+  if (buscarUsuario(nombre)) return res.status(400).json({ error: "Ya existe un usuario con ese nombre." });
+  const usuarios = leerUsuarios();
+  const { salt, hash } = hashPassword(password);
+  usuarios.push({ username: nombre, salt, hash, rol, debeCambiarPassword: true });
+  guardarUsuarios(usuarios);
+  res.json({ ok: true });
 });
 
-// Quita el acceso de un usuario a ESTA app (no borra la cuenta global).
-app.delete("/api/usuarios/:id", requireAdmin, async (req, res) => {
-  try {
-    if (req.params.id === req.usuario.id) {
-      return res.status(400).json({ error: "No podés quitarte el acceso a vos mismo." });
-    }
-    const { data, error: e1 } = await supabaseAdmin.auth.admin.getUserById(req.params.id);
-    if (e1 || !data?.user) return res.status(404).json({ error: "Usuario inexistente." });
-    const roles = { ...(data.user.app_metadata?.roles || {}) };
-    delete roles[APP_SLUG];
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(req.params.id, {
-      app_metadata: { roles },
-    });
-    if (error) throw new Error(error.message);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
+app.post("/api/usuarios/:username/password", requireAdmin, (req, res) => {
+  const { password } = req.body || {};
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres." });
   }
+  const usuarios = leerUsuarios();
+  const idx = usuarios.findIndex((u) => u.username.toLowerCase() === req.params.username.toLowerCase());
+  if (idx === -1) return res.status(404).json({ error: "Usuario inexistente." });
+  const { salt, hash } = hashPassword(password);
+  usuarios[idx] = { ...usuarios[idx], salt, hash, debeCambiarPassword: true };
+  guardarUsuarios(usuarios);
+  res.json({ ok: true });
+});
+
+app.delete("/api/usuarios/:username", requireAdmin, (req, res) => {
+  if (req.params.username.toLowerCase() === req.usuario.username.toLowerCase()) {
+    return res.status(400).json({ error: "No podés eliminarte a vos mismo." });
+  }
+  const usuarios = leerUsuarios();
+  const restantes = usuarios.filter((u) => u.username.toLowerCase() !== req.params.username.toLowerCase());
+  if (restantes.length === usuarios.length) return res.status(404).json({ error: "Usuario inexistente." });
+  guardarUsuarios(restantes);
+  res.json({ ok: true });
 });
 
 // ==================== Banco de imágenes ====================
@@ -251,7 +266,7 @@ const subir = multer({
 });
 
 // ---------- Config (lectura: miembros; escritura: admin) ----------
-app.get("/api/config", requireMiembro, (req, res) => {
+app.get("/api/config", requireAuth, (req, res) => {
   try {
     res.json(leerConfig());
   } catch (err) {
@@ -272,7 +287,7 @@ app.put("/api/config", requireAdmin, (req, res) => {
 });
 
 // ---------- Imágenes libres (popup) ----------
-app.get("/api/images", requireMiembro, (req, res) => {
+app.get("/api/images", requireAuth, (req, res) => {
   try {
     const destino = resolverCarpeta(req.query.carpeta);
     if (!fs.existsSync(destino)) return res.json({ carpeta: req.query.carpeta, imagenes: [] });
@@ -290,7 +305,7 @@ app.get("/api/images", requireMiembro, (req, res) => {
   }
 });
 
-// Preview público (las imágenes ya son públicas en el sitio). Sin auth para poder usarse en <img>.
+// Preview de imagen (sin auth para poder usarse en <img>).
 app.get("/api/file", (req, res) => {
   try {
     const destino = resolverCarpeta(req.query.carpeta);
@@ -304,7 +319,7 @@ app.get("/api/file", (req, res) => {
   }
 });
 
-app.post("/api/images", requireMiembro, subir.single("imagen"), (req, res) => {
+app.post("/api/images", requireAuth, subir.single("imagen"), (req, res) => {
   try {
     const destino = resolverCarpeta(req.query.carpeta);
     fs.mkdirSync(destino, { recursive: true });
@@ -324,7 +339,7 @@ app.post("/api/images", requireMiembro, subir.single("imagen"), (req, res) => {
   }
 });
 
-app.delete("/api/images", requireMiembro, (req, res) => {
+app.delete("/api/images", requireAuth, (req, res) => {
   try {
     const destino = resolverCarpeta(req.query.carpeta);
     const nombre = path.basename(req.query.nombre || "");
@@ -338,7 +353,7 @@ app.delete("/api/images", requireMiembro, (req, res) => {
 });
 
 // ---------- Banners numerados ----------
-app.get("/api/banners", requireMiembro, (req, res) => {
+app.get("/api/banners", requireAuth, (req, res) => {
   try {
     const destino = resolverCarpeta(req.query.carpeta);
     const mapa = mapaBanners(destino);
@@ -357,7 +372,7 @@ app.get("/api/banners", requireMiembro, (req, res) => {
   }
 });
 
-app.post("/api/banners", requireMiembro, subir.single("imagen"), (req, res) => {
+app.post("/api/banners", requireAuth, subir.single("imagen"), (req, res) => {
   try {
     const destino = resolverCarpeta(req.query.carpeta);
     if (!req.file) return res.status(400).json({ error: "Falta la imagen." });
@@ -369,7 +384,7 @@ app.post("/api/banners", requireMiembro, subir.single("imagen"), (req, res) => {
   }
 });
 
-app.post("/api/banners/reemplazar", requireMiembro, subir.single("imagen"), (req, res) => {
+app.post("/api/banners/reemplazar", requireAuth, subir.single("imagen"), (req, res) => {
   try {
     const destino = resolverCarpeta(req.query.carpeta);
     const numero = parseInt(req.query.numero, 10);
@@ -382,7 +397,7 @@ app.post("/api/banners/reemplazar", requireMiembro, subir.single("imagen"), (req
   }
 });
 
-app.delete("/api/banners", requireMiembro, (req, res) => {
+app.delete("/api/banners", requireAuth, (req, res) => {
   try {
     const destino = resolverCarpeta(req.query.carpeta);
     const numero = parseInt(req.query.numero, 10);
@@ -395,10 +410,22 @@ app.delete("/api/banners", requireMiembro, (req, res) => {
   }
 });
 
+// ==================== Frontend (client/dist) ====================
+// Sirve el build de React y hace fallback a index.html para rutas del SPA.
+if (fs.existsSync(DIST)) {
+  app.use(express.static(DIST));
+  app.use((req, res, next) => {
+    if (req.method === "GET" && !req.path.startsWith("/api")) {
+      return res.sendFile(path.join(DIST, "index.html"));
+    }
+    next();
+  });
+}
+
 app.use((err, req, res, next) => {
   res.status(400).json({ error: err.message });
 });
 
 app.listen(PORT, () => {
-  console.log(`Puente del banco de imágenes en http://localhost:${PORT} (app: ${APP_SLUG})`);
+  console.log(`Banco de imágenes escuchando en http://localhost:${PORT}`);
 });

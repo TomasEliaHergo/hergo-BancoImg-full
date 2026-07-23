@@ -8,3 +8,7 @@ npm-debug.log*
 # Variables de entorno (archivos secretos)
 .env
 .env.local
+
+# Secretos y datos locales del servidor (NO versionar)
+server/.secret
+server/usuarios.json
