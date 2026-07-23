@@ -97,6 +97,7 @@ En la máquina interna que ve `\\iis\www` con permiso de escritura:
    BASE_DIR=\\iis\www
    SSL_PFX=C:\Users\Administrador\Desktop\ssl\certificate.p12
    SSL_PASSPHRASE=123456
+   SERVE_FRONTEND=false    # el frontend vive en Vercel; el portal es solo API
    ```
 5. **Firewall de Windows**: abrir el puerto `8443` (regla de entrada).
 6. **NAT en el router**: la regla del MikroTik descrita arriba.

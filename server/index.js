@@ -418,7 +418,9 @@ app.delete("/api/banners", requireAuth, (req, res) => {
 
 // ==================== Frontend (client/dist) ====================
 // Sirve el build de React y hace fallback a index.html para rutas del SPA.
-if (fs.existsSync(DIST)) {
+// Se apaga con SERVE_FRONTEND=false (ej. en el portal, donde el frontend vive en Vercel).
+const SERVE_FRONTEND = process.env.SERVE_FRONTEND !== "false";
+if (SERVE_FRONTEND && fs.existsSync(DIST)) {
   app.use(express.static(DIST));
   app.use((req, res, next) => {
     if (req.method === "GET" && !req.path.startsWith("/api")) {
@@ -426,6 +428,9 @@ if (fs.existsSync(DIST)) {
     }
     next();
   });
+} else {
+  // API pura: raíz informativa (no sirve la app).
+  app.get("/", (req, res) => res.json({ servicio: "Banco de imágenes — API", ok: true }));
 }
 
 app.use((err, req, res, next) => {
