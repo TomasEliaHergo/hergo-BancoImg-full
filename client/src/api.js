@@ -1,5 +1,11 @@
-// Capa de acceso al backend. Todas las rutas pasan por el proxy /api.
+// Capa de acceso al backend.
+// - En desarrollo o sirviendo todo desde el mismo server, VITE_API_BASE_URL queda vacío
+//   y las rutas /api son relativas (proxy de Vite o mismo origen).
+// - Con el frontend en Vercel, VITE_API_BASE_URL apunta al backend, ej: https://banco-api.hergo.com.ar
 import { auth } from "./auth";
+
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const u = (ruta) => `${API_BASE}${ruta}`;
 
 // Evento global para avisar cuando el token dejó de ser válido (401).
 export const onNoAutorizado = { handler: null };
@@ -18,19 +24,19 @@ async function json(res) {
 }
 
 // fetch con header de auth para JSON
-function pedir(url, opciones = {}) {
+function pedir(ruta, opciones = {}) {
   const headers = { ...(opciones.headers || {}), ...auth.authHeader() };
-  return fetch(url, { ...opciones, headers }).then(json);
+  return fetch(u(ruta), { ...opciones, headers }).then(json);
 }
 // fetch con auth para FormData (no seteamos Content-Type: lo pone el navegador)
-function pedirForm(url, metodo, fd) {
-  return fetch(url, { method: metodo, body: fd, headers: { ...auth.authHeader() } }).then(json);
+function pedirForm(ruta, metodo, fd) {
+  return fetch(u(ruta), { method: metodo, body: fd, headers: { ...auth.authHeader() } }).then(json);
 }
 
 export const api = {
   // ----- Auth -----
   login: (username, password) =>
-    fetch("/api/login", {
+    fetch(u("/api/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
@@ -72,7 +78,7 @@ export const api = {
   // ----- Imágenes libres (popup) -----
   listImages: (carpeta) => pedir(`/api/images?carpeta=${encodeURIComponent(carpeta)}`),
   fileUrl: (carpeta, nombre) =>
-    `/api/file?carpeta=${encodeURIComponent(carpeta)}&nombre=${encodeURIComponent(nombre)}`,
+    u(`/api/file?carpeta=${encodeURIComponent(carpeta)}&nombre=${encodeURIComponent(nombre)}`),
   upload: (carpeta, file, nombre) => {
     const fd = new FormData();
     fd.append("imagen", file);

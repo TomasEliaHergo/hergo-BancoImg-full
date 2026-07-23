@@ -1,9 +1,12 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const http = require("http");
+const https = require("https");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -13,7 +16,10 @@ const SECRET_PATH = path.join(__dirname, ".secret");
 const DIST = path.join(__dirname, "..", "client", "dist");
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 horas
 
-app.use(cors()); // uso en red interna; mismo origen al servir client/dist
+// CORS: si se define CORS_ORIGIN (ej. la URL de Vercel), se restringe a esos orígenes.
+// Sin definir, queda abierto (útil en red interna sirviendo el frontend desde acá).
+const CORS_ORIGIN = process.env.CORS_ORIGIN;
+app.use(cors(CORS_ORIGIN ? { origin: CORS_ORIGIN.split(",").map((s) => s.trim()) } : {}));
 app.use(express.json());
 
 // ==================== Autenticación local ====================
@@ -426,6 +432,30 @@ app.use((err, req, res, next) => {
   res.status(400).json({ error: err.message });
 });
 
-app.listen(PORT, () => {
-  console.log(`Banco de imágenes escuchando en http://localhost:${PORT}`);
-});
+// ==================== Arranque (HTTP o HTTPS) ====================
+// Si hay certificado configurado, sirve por HTTPS. Si no, por HTTP.
+// Opción A (un archivo):   SSL_PFX + SSL_PASSPHRASE
+// Opción B (dos archivos): SSL_CERT + SSL_KEY   (opcional SSL_CA para la cadena)
+function opcionesSSL() {
+  const { SSL_PFX, SSL_PASSPHRASE, SSL_CERT, SSL_KEY, SSL_CA } = process.env;
+  if (SSL_PFX) {
+    return { pfx: fs.readFileSync(SSL_PFX), passphrase: SSL_PASSPHRASE };
+  }
+  if (SSL_CERT && SSL_KEY) {
+    const opt = { cert: fs.readFileSync(SSL_CERT), key: fs.readFileSync(SSL_KEY) };
+    if (SSL_CA) opt.ca = fs.readFileSync(SSL_CA);
+    return opt;
+  }
+  return null;
+}
+
+const ssl = opcionesSSL();
+if (ssl) {
+  https.createServer(ssl, app).listen(PORT, () => {
+    console.log(`Banco de imágenes (HTTPS) escuchando en el puerto ${PORT}`);
+  });
+} else {
+  http.createServer(app).listen(PORT, () => {
+    console.log(`Banco de imágenes (HTTP) escuchando en http://localhost:${PORT}`);
+  });
+}
