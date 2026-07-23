@@ -1,0 +1,21 @@
+{
+  "baseDir": "\\\\iis\\www",
+  "publicBaseUrl": "https://portal.hergo.com.ar:8099/Imagenes/www/",
+  "apps": [
+    {
+      "id": "hergo-com-ar",
+      "nombre": "Hergo.com.ar",
+      "paginas": [
+        {
+          "id": "sitio",
+          "nombre": "Sitio web",
+          "secciones": [
+            { "id": "banner-pc", "nombre": "Banner PC", "tipo": "banners", "carpeta": "banners/pc" },
+            { "id": "banner-mobile", "nombre": "Banner Mobile", "tipo": "banners", "carpeta": "banners/mobile" },
+            { "id": "popup", "nombre": "Popup diario", "tipo": "libre", "carpeta": "popup" }
+          ]
+        }
+      ]
+    }
+  ]
+}

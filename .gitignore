@@ -1,0 +1,10 @@
+# Dependencias (esta es la línea clave)
+node_modules/
+
+# Archivos de registro (logs)
+*.log
+npm-debug.log*
+
+# Variables de entorno (archivos secretos)
+.env
+.env.local
