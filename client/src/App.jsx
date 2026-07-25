@@ -2,14 +2,16 @@ import { useEffect, useState } from "react";
 import Usuario from "./Usuario.jsx";
 import Administrador from "./Administrador.jsx";
 import Usuarios from "./Usuarios.jsx";
+import Programadas from "./Programadas.jsx";
 import Login from "./Login.jsx";
 import CambiarPassword from "./CambiarPassword.jsx";
 import { auth } from "./auth";
 import { onNoAutorizado } from "./api";
-import { IconImagen, IconConfig, IconUsuarios, IconSalir, IconLlave, IconMenu } from "./icons.jsx";
+import { IconImagen, IconConfig, IconUsuarios, IconSalir, IconLlave, IconMenu, IconReloj } from "./icons.jsx";
 
 const VISTAS = {
   usuario: { titulo: "Cargar imágenes", subtitulo: "Agregá, reemplazá o eliminá las imágenes del sitio." },
+  programadas: { titulo: "Programadas", subtitulo: "Programá la publicación y la baja de imágenes." },
   admin: { titulo: "Configuración", subtitulo: "Definí las secciones y sus carpetas destino." },
   usuarios: { titulo: "Usuarios", subtitulo: "Gestioná las cuentas que pueden ingresar." },
 };
@@ -60,6 +62,7 @@ export default function App() {
   const esAdmin = usuario.rol === "administrador";
   const nav = [
     { id: "usuario", label: "Cargar imágenes", Icon: IconImagen, visible: true },
+    { id: "programadas", label: "Programadas", Icon: IconReloj, visible: true },
     { id: "admin", label: "Configuración", Icon: IconConfig, visible: esAdmin },
     { id: "usuarios", label: "Usuarios", Icon: IconUsuarios, visible: esAdmin },
   ].filter((n) => n.visible);
@@ -115,6 +118,7 @@ export default function App() {
         </header>
         <div className="main-body">
           {vista === "usuario" && <Usuario />}
+          {vista === "programadas" && <Programadas />}
           {vista === "admin" && esAdmin && <Administrador />}
           {vista === "usuarios" && esAdmin && <Usuarios usuarioActual={usuario} />}
         </div>

@@ -12,3 +12,7 @@ npm-debug.log*
 # Secretos y datos locales del servidor (NO versionar)
 server/.secret
 server/usuarios.json
+
+# Programaciones: cola de tareas y staging de archivos pendientes
+server/tareas.json
+server/pendientes/

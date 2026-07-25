@@ -2,16 +2,6 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import Toast from "./Toast.jsx";
 
-// Genera un id simple a partir de un nombre
-function slug(txt) {
-  return (txt || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "") || "item-" + Math.floor(Math.random() * 10000);
-}
-
 export default function Administrador() {
   const [config, setConfig] = useState(null);
   const [mensaje, setMensaje] = useState(null);
@@ -81,12 +71,7 @@ export default function Administrador() {
               <input
                 value={app.nombre}
                 placeholder="Nombre de la aplicación"
-                onChange={(e) =>
-                  actualizar((c) => {
-                    c.apps[ai].nombre = e.target.value;
-                    c.apps[ai].id = slug(e.target.value);
-                  })
-                }
+                onChange={(e) => actualizar((c) => (c.apps[ai].nombre = e.target.value))}
               />
             </label>
             <button className="btn mini peligro" onClick={() => actualizar((c) => c.apps.splice(ai, 1))}>
@@ -102,12 +87,7 @@ export default function Administrador() {
                   <input
                     value={pag.nombre}
                     placeholder="Nombre de la página"
-                    onChange={(e) =>
-                      actualizar((c) => {
-                        c.apps[ai].paginas[pi].nombre = e.target.value;
-                        c.apps[ai].paginas[pi].id = slug(e.target.value);
-                      })
-                    }
+                    onChange={(e) => actualizar((c) => (c.apps[ai].paginas[pi].nombre = e.target.value))}
                   />
                 </label>
                 <button
@@ -129,10 +109,7 @@ export default function Administrador() {
                         value={sec.nombre}
                         placeholder="Ej. Banner PC"
                         onChange={(e) =>
-                          actualizar((c) => {
-                            c.apps[ai].paginas[pi].secciones[si].nombre = e.target.value;
-                            c.apps[ai].paginas[pi].secciones[si].id = slug(e.target.value);
-                          })
+                          actualizar((c) => (c.apps[ai].paginas[pi].secciones[si].nombre = e.target.value))
                         }
                       />
                     </label>

@@ -7,6 +7,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const http = require("http");
 const https = require("https");
+const tareas = require("./tareas");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -14,6 +15,8 @@ const CONFIG_PATH = path.join(__dirname, "config.json");
 const USERS_PATH = path.join(__dirname, "usuarios.json");
 const SECRET_PATH = path.join(__dirname, ".secret");
 const DIST = path.join(__dirname, "..", "client", "dist");
+const PENDIENTES = path.join(__dirname, "pendientes"); // staging de publicaciones futuras
+fs.mkdirSync(PENDIENTES, { recursive: true });
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 horas
 
 // CORS: si se define CORS_ORIGIN (ej. la URL de Vercel), se restringe a esos orígenes.
@@ -263,6 +266,29 @@ function renumerar(destino, borrado) {
     }
   }
 }
+// Reordena los banners al orden dado (lista de archivos actuales en el orden deseado).
+// Renombra en dos fases (temporales → definitivos) para evitar colisiones y preservar extensiones.
+function reordenarBanners(destino, orden) {
+  const actuales = Object.values(mapaBanners(destino));
+  const a = [...actuales].sort();
+  const b = [...orden].sort();
+  if (a.length !== b.length || a.some((x, i) => x !== b[i])) {
+    const e = new Error("La lista cambió, refrescá la vista e intentá de nuevo.");
+    e.code = "ORDEN_CAMBIADO";
+    throw e;
+  }
+  if (orden.length <= 1) return; // no-op
+  // Fase 1: todo a nombres temporales únicos.
+  orden.forEach((archivo, i) => {
+    const ext = path.extname(archivo);
+    fs.renameSync(path.join(destino, archivo), path.join(destino, `__ord_${i}__${ext}`));
+  });
+  // Fase 2: temporales a los definitivos banner-1, banner-2, …
+  orden.forEach((archivo, i) => {
+    const ext = path.extname(archivo);
+    fs.renameSync(path.join(destino, `__ord_${i}__${ext}`), path.join(destino, `banner-${i + 1}${ext}`));
+  });
+}
 
 const subir = multer({
   storage: multer.memoryStorage(),
@@ -416,6 +442,199 @@ app.delete("/api/banners", requireAuth, (req, res) => {
   }
 });
 
+// Reordenar: recibe la lista de archivos actuales en el nuevo orden.
+app.put("/api/banners/orden", requireAuth, (req, res) => {
+  try {
+    const destino = resolverCarpeta(req.query.carpeta);
+    const orden = req.body?.orden;
+    if (!Array.isArray(orden) || orden.length === 0) {
+      return res.status(400).json({ error: "Falta el orden." });
+    }
+    reordenarBanners(destino, orden);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(err.code === "ORDEN_CAMBIADO" ? 409 : 400).json({ error: err.message });
+  }
+});
+
+// ==================== Programaciones (Feature B) ====================
+// Mueve un archivo aunque origen y destino estén en discos/redes distintos (EXDEV).
+function mover(src, dst) {
+  try {
+    fs.renameSync(src, dst);
+  } catch (e) {
+    if (e.code === "EXDEV") {
+      fs.copyFileSync(src, dst);
+      fs.unlinkSync(src);
+    } else throw e;
+  }
+}
+
+// Ejecuta una tarea (lo llama el scheduler a la hora indicada).
+async function ejecutarTarea(t) {
+  const destino = resolverCarpeta(t.carpeta);
+
+  if (t.accion === "publicar") {
+    const staging = path.join(PENDIENTES, t.archivoStaging);
+    if (!fs.existsSync(staging)) throw new Error("Falta el archivo en staging.");
+    fs.mkdirSync(destino, { recursive: true });
+    const ext = path.extname(staging).toLowerCase();
+    if (t.tipo === "banners") {
+      const n = proximoNumero(mapaBanners(destino)); // número al momento de ejecutar
+      mover(staging, path.join(destino, `banner-${n}${ext}`));
+    } else {
+      const original = path.basename(t.nombreOriginal || `imagen${ext}`);
+      const base = path.basename(original, path.extname(original));
+      let nombre = original;
+      let i = 1;
+      while (fs.existsSync(path.join(destino, nombre))) {
+        nombre = `${base}-${i}${ext}`;
+        i++;
+      }
+      mover(staging, path.join(destino, nombre));
+    }
+    return;
+  }
+
+  if (t.accion === "eliminar") {
+    if (!fs.existsSync(destino)) return; // no-op: carpeta inexistente
+    const archivos = fs
+      .readdirSync(destino)
+      .filter((f) => esImagen(f) && fs.statSync(path.join(destino, f)).isFile());
+    const objetivo = archivos.find((f) => tareas.hashArchivo(path.join(destino, f)) === t.hashObjetivo);
+    if (!objetivo) return; // ya no existe (borrado/reemplazado) → no-op
+    fs.unlinkSync(path.join(destino, objetivo));
+    if (t.tipo === "banners") {
+      const m = RE_BANNER.exec(objetivo);
+      if (m) renumerar(destino, Number(m[1]));
+    }
+  }
+}
+
+function validarFechaFutura(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n)) throw new Error("Fecha inválida.");
+  if (n <= Date.now()) throw new Error("La fecha debe ser futura.");
+  return n;
+}
+
+// Programar publicación (con baja opcional = ventana). Sube el archivo a staging.
+app.post("/api/programaciones/publicar", requireAuth, subir.single("imagen"), (req, res) => {
+  try {
+    const { carpeta, tipo } = req.body;
+    if (!req.file) return res.status(400).json({ error: "Falta la imagen." });
+    if (!["banners", "libre"].includes(tipo)) return res.status(400).json({ error: "Tipo inválido." });
+    resolverCarpeta(carpeta); // valida ruta
+    const fechaAlta = validarFechaFutura(req.body.fechaAlta);
+    const fechaBaja = req.body.fechaBaja ? validarFechaFutura(req.body.fechaBaja) : null;
+    if (fechaBaja && fechaBaja <= fechaAlta) {
+      return res.status(400).json({ error: "La baja debe ser posterior a la publicación." });
+    }
+
+    const id = tareas.uuid();
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const nombreStaging = `${id}${ext}`;
+    fs.writeFileSync(path.join(PENDIENTES, nombreStaging), req.file.buffer);
+    const hash = tareas.hashBuffer(req.file.buffer);
+
+    const creadas = [];
+    creadas.push(
+      tareas.crear({
+        id,
+        tipo,
+        carpeta,
+        accion: "publicar",
+        ejecutarEn: fechaAlta,
+        archivoStaging: nombreStaging,
+        nombreOriginal: path.basename(req.file.originalname),
+        hashContenido: hash,
+        referencia: path.basename(req.file.originalname),
+        ventanaId: fechaBaja ? id : null,
+        creadoPor: req.usuario.username,
+      })
+    );
+    if (fechaBaja) {
+      creadas.push(
+        tareas.crear({
+          tipo,
+          carpeta,
+          accion: "eliminar",
+          ejecutarEn: fechaBaja,
+          hashObjetivo: hash,
+          referencia: path.basename(req.file.originalname),
+          ventanaId: id,
+          creadoPor: req.usuario.username,
+        })
+      );
+    }
+    res.json({ ok: true, tareas: creadas });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Programar la baja de una imagen ya publicada (identidad por hash del archivo actual).
+app.post("/api/programaciones/eliminar", requireAuth, (req, res) => {
+  try {
+    const { carpeta, tipo, archivo } = req.body || {};
+    if (!["banners", "libre"].includes(tipo)) return res.status(400).json({ error: "Tipo inválido." });
+    const destino = resolverCarpeta(carpeta);
+    const nombre = path.basename(archivo || "");
+    const ruta = path.join(destino, nombre);
+    if (!fs.existsSync(ruta) || !esImagen(nombre)) return res.status(404).json({ error: "No existe la imagen." });
+    const fecha = validarFechaFutura(req.body.fecha);
+    const hash = tareas.hashArchivo(ruta);
+    const creada = tareas.crear({
+      tipo,
+      carpeta,
+      accion: "eliminar",
+      ejecutarEn: fecha,
+      hashObjetivo: hash,
+      referencia: nombre,
+      ventanaId: null,
+      creadoPor: req.usuario.username,
+    });
+    res.json({ ok: true, tarea: creada });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Listar programaciones.
+app.get("/api/programaciones", requireAuth, (req, res) => {
+  const filtro = {};
+  if (req.query.estado) filtro.estado = req.query.estado;
+  if (req.query.carpeta) filtro.carpeta = req.query.carpeta;
+  res.json(tareas.listar(filtro));
+});
+
+// Cancelar una programación pendiente (y sus ligadas por ventana).
+app.delete("/api/programaciones/:id", requireAuth, (req, res) => {
+  try {
+    const t = tareas.obtener(req.params.id);
+    if (!t) return res.status(404).json({ error: "Programación inexistente." });
+    if (t.estado !== "pendiente") return res.status(400).json({ error: "Solo se cancelan las pendientes." });
+
+    const cancelar = (tarea) => {
+      if (tarea.accion === "publicar" && tarea.archivoStaging) {
+        const s = path.join(PENDIENTES, tarea.archivoStaging);
+        if (fs.existsSync(s)) fs.unlinkSync(s);
+      }
+      tareas.actualizar(tarea.id, { estado: "cancelada" });
+    };
+    cancelar(t);
+    // Si es la publicación de una ventana, cancelar también su baja ligada.
+    if (t.ventanaId === t.id) {
+      for (const otra of tareas.listar({ estado: "pendiente" })) {
+        if (otra.ventanaId === t.id && otra.id !== t.id) cancelar(otra);
+      }
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ==================== Frontend (client/dist) ====================
 // Sirve el build de React y hace fallback a index.html para rutas del SPA.
 // Se apaga con SERVE_FRONTEND=false (ej. en el portal, donde el frontend vive en Vercel).
@@ -453,6 +672,9 @@ function opcionesSSL() {
   }
   return null;
 }
+
+// Motor de programaciones: recupera vencidas y arranca el poller (cada 30 s por defecto).
+tareas.arrancarScheduler(ejecutarTarea, Number(process.env.POLL_MS) || 30000);
 
 const ssl = opcionesSSL();
 if (ssl) {

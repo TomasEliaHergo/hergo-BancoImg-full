@@ -106,4 +106,33 @@ export const api = {
   },
   removeBanner: (carpeta, numero) =>
     pedir(`/api/banners?carpeta=${encodeURIComponent(carpeta)}&numero=${numero}`, { method: "DELETE" }),
+  reordenarBanners: (carpeta, orden) =>
+    pedir(`/api/banners/orden?carpeta=${encodeURIComponent(carpeta)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orden }),
+    }),
+
+  // ----- Programaciones -----
+  listarProgramaciones: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return pedir(`/api/programaciones${q ? "?" + q : ""}`);
+  },
+  programarPublicacion: ({ carpeta, tipo, fechaAlta, fechaBaja, file }) => {
+    const fd = new FormData();
+    fd.append("imagen", file);
+    fd.append("carpeta", carpeta);
+    fd.append("tipo", tipo);
+    fd.append("fechaAlta", String(fechaAlta));
+    if (fechaBaja) fd.append("fechaBaja", String(fechaBaja));
+    return pedirForm("/api/programaciones/publicar", "POST", fd);
+  },
+  programarBaja: ({ carpeta, tipo, archivo, fecha }) =>
+    pedir("/api/programaciones/eliminar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ carpeta, tipo, archivo, fecha }),
+    }),
+  cancelarProgramacion: (id) =>
+    pedir(`/api/programaciones/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
