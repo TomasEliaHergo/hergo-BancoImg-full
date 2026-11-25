@@ -20,42 +20,21 @@ client/   -> Frontend React (Vite)
 banco/    -> Carpeta base donde viven las imágenes (configurable)
 ```
 
-## Puesta en marcha (desarrollo)
+## Puesta en marcha
 
-En dos terminales:
-
-```bash
-cd server
-npm install
-npm run dev
-```
+Desde la raíz del proyecto:
 
 ```bash
-cd client
-npm install
-npm run dev
+npm install     # una sola vez: instala raíz, server/ y client/
+npm start       # construye el frontend y levanta el server (frontend + API)
 ```
 
-Abrir http://localhost:5173
+Abrir http://localhost:4000 (o `http://IP-DE-LA-PC:4000` desde otras PCs de la red).
 
-## Producción (una sola PC, acceso por IP)
+Para desarrollo con recarga en caliente: `npm run dev` (server + Vite) y abrir http://localhost:5173.
 
 Todo corre en **una sola máquina** de la red interna (la que tenga acceso de escritura
-a `\\iis\www`). El mismo Express sirve el frontend **y** la API en un único puerto.
-
-```bash
-cd client && npm install && npm run build
-cd ../server && npm install && npm start
-```
-
-El server detecta `client/dist` y lo sirve automáticamente. Los diseñadores entran desde
-cualquier PC de la red a `http://IP-DE-LA-PC:4000` (ej. `http://192.168.1.50:4000`).
-
-Notas:
-- Averiguá la IP con `ipconfig` (IPv4 de la red interna).
-- Abrí el puerto 4000 en el Firewall de Windows (regla de entrada) para que otras PCs lleguen.
-- Para que arranque solo al prender la PC, instalalo como servicio (ej. `pm2` o NSSM).
-- No hace falta Node en el servidor IIS viejo: esta PC escribe en `\\iis\www` por red.
+a `\\iis\www`). Detalle de firewall, servicio y HTTPS opcional en `DESPLIEGUE.md`.
 
 ## Configuración importante
 

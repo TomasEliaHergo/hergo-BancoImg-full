@@ -187,7 +187,7 @@ DELETE /api/programaciones/:id    // cancela una pendiente
   La Feature A no lo requiere; la Feature B sí lo justifica.
 - **Backend como servicio siempre activo** (NSSM/pm2): pasa de recomendable a **obligatorio**
   con la Feature B.
-- **No romper la arquitectura actual:** frontend en Vercel + backend interno con HTTPS. Estas
+- **No romper la arquitectura actual:** un solo server interno que sirve frontend + API. Estas
   features solo agregan endpoints y pantallas; el modelo de despliegue no cambia
   (ver `DESPLIEGUE.md`).
 - **Seguridad/permisos:** respetar los roles actuales (miembro/administrador). Definir si

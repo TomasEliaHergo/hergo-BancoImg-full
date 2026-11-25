@@ -1,0 +1,16 @@
+{
+  "name": "banco-imagenes",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Banco de Imágenes — app interna (frontend React + backend Node en un solo proceso)",
+  "scripts": {
+    "postinstall": "cd server && npm install && cd ../client && npm install",
+    "build": "npm --prefix client run build",
+    "start": "npm run build && npm --prefix server start",
+    "serve": "npm --prefix server start",
+    "dev": "concurrently -k -n server,client -c blue,green \"npm --prefix server run dev\" \"npm --prefix client run dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

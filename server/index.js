@@ -19,7 +19,7 @@ const PENDIENTES = path.join(__dirname, "pendientes"); // staging de publicacion
 fs.mkdirSync(PENDIENTES, { recursive: true });
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 horas
 
-// CORS: si se define CORS_ORIGIN (ej. la URL de Vercel), se restringe a esos orígenes.
+// CORS: si se define CORS_ORIGIN, se restringe a esos orígenes.
 // Sin definir, queda abierto (útil en red interna sirviendo el frontend desde acá).
 const CORS_ORIGIN = process.env.CORS_ORIGIN;
 app.use(cors(CORS_ORIGIN ? { origin: CORS_ORIGIN.split(",").map((s) => s.trim()) } : {}));
@@ -637,7 +637,7 @@ app.delete("/api/programaciones/:id", requireAuth, (req, res) => {
 
 // ==================== Frontend (client/dist) ====================
 // Sirve el build de React y hace fallback a index.html para rutas del SPA.
-// Se apaga con SERVE_FRONTEND=false (ej. en el portal, donde el frontend vive en Vercel).
+// Se apaga con SERVE_FRONTEND=false (modo solo API).
 const SERVE_FRONTEND = process.env.SERVE_FRONTEND !== "false";
 if (SERVE_FRONTEND && fs.existsSync(DIST)) {
   app.use(express.static(DIST));

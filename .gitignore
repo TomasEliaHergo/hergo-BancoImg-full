@@ -16,3 +16,5 @@ server/usuarios.json
 # Programaciones: cola de tareas y staging de archivos pendientes
 server/tareas.json
 server/pendientes/
+# Build del frontend (se genera con npm start / npm run build)
+client/dist/

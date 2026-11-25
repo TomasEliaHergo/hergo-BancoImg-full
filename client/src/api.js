@@ -1,7 +1,7 @@
 // Capa de acceso al backend.
 // - En desarrollo o sirviendo todo desde el mismo server, VITE_API_BASE_URL queda vacío
 //   y las rutas /api son relativas (proxy de Vite o mismo origen).
-// - Con el frontend en Vercel, VITE_API_BASE_URL apunta al backend, ej: https://banco-api.hergo.com.ar
+// - Si el backend viviera en otra URL, VITE_API_BASE_URL apunta a él (hoy no se usa).
 import { auth } from "./auth";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
